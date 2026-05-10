@@ -48,6 +48,7 @@ struct Settings
     tribool UDPFlag, TFOFlag, skipCertVerify, TLS13Flag, enableInsert;
     bool enableSort = false, updateStrict = false;
     bool clashUseNewField = false, singBoxAddClashModes = true;
+    bool skipEmptyProxyGroups = false;
     std::string clashProxiesStyle = "flow", clashProxyGroupsStyle = "block";
     std::string proxyConfig, proxyRuleset, proxySubscription;
     int updateInterval = 0;
@@ -92,6 +93,7 @@ struct ExternalConfig
     template_args *tpl_args = nullptr;
     bool overwrite_original_rules = false;
     bool enable_rule_generator = true;
+    bool skip_empty_proxy_groups = false;
     tribool add_emoji;
     tribool remove_old_emoji;
 };

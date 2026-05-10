@@ -3,6 +3,7 @@
 #include <numeric>
 #include <cmath>
 #include <climits>
+#include <unordered_set>
 
 #include "config/regmatch.h"
 #include "generator/config/subexport.h"
@@ -228,6 +229,83 @@ void groupGenerate(const std::string &rule, std::vector<Proxy> &nodelist, string
                 filtered_nodelist.emplace_back(x.Remark);
         }
     }
+}
+
+namespace
+{
+const std::unordered_set<std::string> clash_terminal_group_members = {
+    "DIRECT",
+    "REJECT",
+    "REJECT-DROP",
+    "REJECT-TINYGIF",
+    "PASS",
+    "COMPATIBLE",
+};
+
+struct ResolvedClashProxyGroup
+{
+    const ProxyGroupConfig *config = nullptr;
+    string_array raw_members;
+    string_array filtered_members;
+    bool valid = false;
+};
+
+bool isClashResolvableGroupMember(const std::string &member, const std::unordered_set<std::string> &remark_set, const std::unordered_set<std::string> &valid_group_names)
+{
+    return remark_set.count(member) || clash_terminal_group_members.count(member) || valid_group_names.count(member);
+}
+
+std::vector<ResolvedClashProxyGroup> resolveClashProxyGroups(const ProxyGroupConfigs &extra_proxy_group, std::vector<Proxy> &nodelist, const string_array &remarks_list, extra_settings &ext)
+{
+    std::vector<ResolvedClashProxyGroup> resolved_groups;
+    std::unordered_set<std::string> remark_set(remarks_list.begin(), remarks_list.end());
+    std::unordered_set<std::string> valid_group_names;
+
+    resolved_groups.reserve(extra_proxy_group.size());
+    for(const auto &group : extra_proxy_group)
+    {
+        resolved_groups.push_back({&group});
+        auto &resolved_group = resolved_groups.back();
+        resolved_group.valid = !group.UsingProvider.empty();
+        if(resolved_group.valid)
+            valid_group_names.emplace(group.Name);
+        for(const auto &rule : group.Proxies)
+            groupGenerate(rule, nodelist, resolved_group.raw_members, true, ext);
+    }
+
+    bool changed = true;
+    while(changed)
+    {
+        changed = false;
+        for(auto &resolved_group : resolved_groups)
+        {
+            if(resolved_group.valid)
+                continue;
+            for(const auto &member : resolved_group.raw_members)
+            {
+                if(!isClashResolvableGroupMember(member, remark_set, valid_group_names))
+                    continue;
+                resolved_group.valid = true;
+                valid_group_names.emplace(resolved_group.config->Name);
+                changed = true;
+                break;
+            }
+        }
+    }
+
+    for(auto &resolved_group : resolved_groups)
+    {
+        if(!resolved_group.valid || !resolved_group.config->UsingProvider.empty())
+            continue;
+        for(const auto &member : resolved_group.raw_members)
+        {
+            if(isClashResolvableGroupMember(member, remark_set, valid_group_names))
+                resolved_group.filtered_members.emplace_back(member);
+        }
+    }
+
+    return resolved_groups;
+}
 }
 
 void proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupConfigs &extra_proxy_group, bool clashR, extra_settings &ext)
@@ -748,73 +826,135 @@ void proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGr
         yamlnode["Proxy"] = proxies;
 
 
-    for(const ProxyGroupConfig &x : extra_proxy_group)
+    if(ext.skip_empty_proxy_groups)
     {
-        YAML::Node singlegroup;
-        string_array filtered_nodelist;
-
-        singlegroup["name"] = x.Name;
-        if (x.Type == ProxyGroupType::Smart)
-            singlegroup["type"] = "url-test";
-        else
-            singlegroup["type"] = x.TypeStr();
-
-        switch(x.Type)
+        const auto resolved_groups = resolveClashProxyGroups(extra_proxy_group, nodelist, remarks_list, ext);
+        for(const auto &resolved_group : resolved_groups)
         {
-        case ProxyGroupType::Select:
-        case ProxyGroupType::Relay:
-            break;
-        case ProxyGroupType::LoadBalance:
-            singlegroup["strategy"] = x.StrategyStr();
-            [[fallthrough]];
-        case ProxyGroupType::Smart:
-            [[fallthrough]];
-        case ProxyGroupType::URLTest:
-            if(!x.Lazy.is_undef())
-                singlegroup["lazy"] = x.Lazy.get();
-            [[fallthrough]];
-        case ProxyGroupType::Fallback:
-            singlegroup["url"] = x.Url;
-            if(x.Interval > 0)
-                singlegroup["interval"] = x.Interval;
-            if(x.Tolerance > 0)
-                singlegroup["tolerance"] = x.Tolerance;
-            break;
-        default:
-            continue;
-        }
-        if(!x.DisableUdp.is_undef())
-            singlegroup["disable-udp"] = x.DisableUdp.get();
-
-        for(const auto& y : x.Proxies)
-            groupGenerate(y, nodelist, filtered_nodelist, true, ext);
-
-        if(!x.UsingProvider.empty())
-            singlegroup["use"] = x.UsingProvider;
-        else
-        {
-            if(filtered_nodelist.empty())
-                filtered_nodelist.emplace_back("DIRECT");
-        }
-        if(!filtered_nodelist.empty())
-            singlegroup["proxies"] = filtered_nodelist;
-        if(group_block)
-            singlegroup.SetStyle(YAML::EmitterStyle::Block);
-        else
-            singlegroup.SetStyle(YAML::EmitterStyle::Flow);
-
-        bool replace_flag = false;
-        for(auto && original_group : original_groups)
-        {
-            if(original_group["name"].as<std::string>() == x.Name)
+            const auto &x = *resolved_group.config;
+            if(!resolved_group.valid)
             {
-                original_group.reset(singlegroup);
-                replace_flag = true;
-                break;
+                writeLog(0, "Skip empty clash proxy group: " + x.Name, LOG_LEVEL_INFO);
+                continue;
             }
-        }
-        if(!replace_flag)
+
+            YAML::Node singlegroup;
+            singlegroup["name"] = x.Name;
+            if (x.Type == ProxyGroupType::Smart)
+                singlegroup["type"] = "url-test";
+            else
+                singlegroup["type"] = x.TypeStr();
+
+            switch(x.Type)
+            {
+            case ProxyGroupType::Select:
+            case ProxyGroupType::Relay:
+                break;
+            case ProxyGroupType::LoadBalance:
+                singlegroup["strategy"] = x.StrategyStr();
+                [[fallthrough]];
+            case ProxyGroupType::Smart:
+                [[fallthrough]];
+            case ProxyGroupType::URLTest:
+                if(!x.Lazy.is_undef())
+                    singlegroup["lazy"] = x.Lazy.get();
+                [[fallthrough]];
+            case ProxyGroupType::Fallback:
+                singlegroup["url"] = x.Url;
+                if(x.Interval > 0)
+                    singlegroup["interval"] = x.Interval;
+                if(x.Tolerance > 0)
+                    singlegroup["tolerance"] = x.Tolerance;
+                break;
+            default:
+                continue;
+            }
+            if(!x.DisableUdp.is_undef())
+                singlegroup["disable-udp"] = x.DisableUdp.get();
+
+            if(!x.UsingProvider.empty())
+                singlegroup["use"] = x.UsingProvider;
+            else
+                singlegroup["proxies"] = resolved_group.filtered_members;
+
+            if(group_block)
+                singlegroup.SetStyle(YAML::EmitterStyle::Block);
+            else
+                singlegroup.SetStyle(YAML::EmitterStyle::Flow);
+
             original_groups.push_back(singlegroup);
+        }
+    }
+    else
+    {
+        for(const ProxyGroupConfig &x : extra_proxy_group)
+        {
+            YAML::Node singlegroup;
+            string_array filtered_nodelist;
+
+            singlegroup["name"] = x.Name;
+            if (x.Type == ProxyGroupType::Smart)
+                singlegroup["type"] = "url-test";
+            else
+                singlegroup["type"] = x.TypeStr();
+
+            switch(x.Type)
+            {
+            case ProxyGroupType::Select:
+            case ProxyGroupType::Relay:
+                break;
+            case ProxyGroupType::LoadBalance:
+                singlegroup["strategy"] = x.StrategyStr();
+                [[fallthrough]];
+            case ProxyGroupType::Smart:
+                [[fallthrough]];
+            case ProxyGroupType::URLTest:
+                if(!x.Lazy.is_undef())
+                    singlegroup["lazy"] = x.Lazy.get();
+                [[fallthrough]];
+            case ProxyGroupType::Fallback:
+                singlegroup["url"] = x.Url;
+                if(x.Interval > 0)
+                    singlegroup["interval"] = x.Interval;
+                if(x.Tolerance > 0)
+                    singlegroup["tolerance"] = x.Tolerance;
+                break;
+            default:
+                continue;
+            }
+            if(!x.DisableUdp.is_undef())
+                singlegroup["disable-udp"] = x.DisableUdp.get();
+
+            for(const auto& y : x.Proxies)
+                groupGenerate(y, nodelist, filtered_nodelist, true, ext);
+
+            if(!x.UsingProvider.empty())
+                singlegroup["use"] = x.UsingProvider;
+            else
+            {
+                if(filtered_nodelist.empty())
+                    filtered_nodelist.emplace_back("DIRECT");
+            }
+            if(!filtered_nodelist.empty())
+                singlegroup["proxies"] = filtered_nodelist;
+            if(group_block)
+                singlegroup.SetStyle(YAML::EmitterStyle::Block);
+            else
+                singlegroup.SetStyle(YAML::EmitterStyle::Flow);
+
+            bool replace_flag = false;
+            for(auto && original_group : original_groups)
+            {
+                if(original_group["name"].as<std::string>() == x.Name)
+                {
+                    original_group.reset(singlegroup);
+                    replace_flag = true;
+                    break;
+                }
+            }
+            if(!replace_flag)
+                original_groups.push_back(singlegroup);
+        }
     }
 
     if(group_compact)

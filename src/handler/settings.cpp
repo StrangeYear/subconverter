@@ -379,6 +379,7 @@ void readYAMLConf(YAML::Node &node)
         section["clash_proxies_style"] >> global.clashProxiesStyle;
         section["clash_proxy_groups_style"] >> global.clashProxyGroupsStyle;
         section["singbox_add_clash_modes"] >> global.singBoxAddClashModes;
+        section["skip_empty_proxy_groups"] >> global.skipEmptyProxyGroups;
     }
 
     if(section["rename_node"].IsSequence())
@@ -640,7 +641,8 @@ void readTOMLConf(toml::value &root)
                   "clash_use_new_field_name", global.clashUseNewField,
                   "clash_proxies_style", global.clashProxiesStyle,
                   "clash_proxy_groups_style", global.clashProxyGroupsStyle,
-                  "singbox_add_clash_modes", global.singBoxAddClashModes
+                  "singbox_add_clash_modes", global.singBoxAddClashModes,
+                  "skip_empty_proxy_groups", global.skipEmptyProxyGroups
     );
 
     auto renameconfs = toml::find_or<std::vector<toml::value>>(section_node_pref, "rename_node", {});
@@ -887,6 +889,7 @@ void readConf()
         ini.get_if_exist("clash_proxies_style", global.clashProxiesStyle);
         ini.get_if_exist("clash_proxy_groups_style", global.clashProxyGroupsStyle);
         ini.get_bool_if_exist("singbox_add_clash_modes", global.singBoxAddClashModes);
+        ini.get_bool_if_exist("skip_empty_proxy_groups", global.skipEmptyProxyGroups);
         if(ini.item_prefix_exist("rename_node"))
         {
             ini.get_all("rename_node", tempArray);
@@ -1092,6 +1095,7 @@ int loadExternalYAML(YAML::Node &node, ExternalConfig &ext)
 
     section["enable_rule_generator"] >> ext.enable_rule_generator;
     section["overwrite_original_rules"] >> ext.overwrite_original_rules;
+    section["skip_empty_proxy_groups"] >> ext.skip_empty_proxy_groups;
 
     const char *group_name = section["proxy_groups"].IsDefined() ? "proxy_groups" : "custom_proxy_group";
     if(section[group_name].size())
@@ -1164,6 +1168,7 @@ int loadExternalTOML(toml::value &root, ExternalConfig &ext)
                   "loon_rule_base", ext.loon_rule_base,
                   "sssub_rule_base", ext.sssub_rule_base,
                   "singbox_rule_base", ext.singbox_rule_base,
+                  "skip_empty_proxy_groups", ext.skip_empty_proxy_groups,
                   "add_emoji", ext.add_emoji,
                   "remove_old_emoji", ext.remove_old_emoji,
                   "include_remarks", ext.include,
@@ -1269,6 +1274,7 @@ int loadExternalConfig(std::string &path, ExternalConfig &ext)
 
     ini.get_bool_if_exist("overwrite_original_rules", ext.overwrite_original_rules);
     ini.get_bool_if_exist("enable_rule_generator", ext.enable_rule_generator);
+    ini.get_bool_if_exist("skip_empty_proxy_groups", ext.skip_empty_proxy_groups);
 
     if(ini.item_prefix_exist("rename"))
     {

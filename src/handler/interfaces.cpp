@@ -413,6 +413,7 @@ std::string subconverter(RESPONSE_CALLBACK_ARGS)
 
     ext.clash_proxies_style = global.clashProxiesStyle;
     ext.clash_proxy_groups_style = global.clashProxyGroupsStyle;
+    ext.skip_empty_proxy_groups = global.skipEmptyProxyGroups;
 
     /// read preference from argument, assign global var if not in argument
     ext.tfo.define(argTFO).define(global.TFOFlag);
@@ -472,6 +473,7 @@ std::string subconverter(RESPONSE_CALLBACK_ARGS)
                         lCustomProxyGroups = extconf.custom_proxy_group;
                     ext.enable_rule_generator = extconf.enable_rule_generator;
                     ext.overwrite_original_rules = extconf.overwrite_original_rules;
+                    ext.skip_empty_proxy_groups = extconf.skip_empty_proxy_groups;
                 }
             }
             if(!extconf.rename.empty())
@@ -1125,6 +1127,7 @@ std::string surgeConfToClash(RESPONSE_CALLBACK_ARGS)
     ext.tls13 = global.TLS13Flag;
     ext.clash_proxies_style = global.clashProxiesStyle;
     ext.clash_proxy_groups_style = global.clashProxyGroupsStyle;
+    ext.skip_empty_proxy_groups = global.skipEmptyProxyGroups;
 
     ProxyGroupConfigs dummy_groups;
     proxyToClash(nodes, clash, dummy_groups, false, ext);
