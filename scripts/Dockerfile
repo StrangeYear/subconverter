@@ -1,12 +1,13 @@
-FROM alpine:3.16 AS builder
+FROM alpine:3.20 AS builder
 LABEL maintainer="metacubex.official@gmail.com"
 ARG THREADS="4"
 ARG SHA=""
+ARG REPO_DIR="/src/subconverter"
 
 # build minimized
 WORKDIR /
 RUN set -xe && \
-    apk add --no-cache --virtual .build-tools git g++ build-base linux-headers cmake python3 && \
+    apk add --no-cache --virtual .build-tools git g++ build-base linux-headers cmake python3 py3-pip py3-gitpython && \
     apk add --no-cache --virtual .build-deps curl-dev rapidjson-dev pcre2-dev yaml-cpp-dev && \
     git clone https://github.com/ftk/quickjspp --depth=1 && \
     cd quickjspp && \
@@ -34,24 +35,25 @@ RUN set -xe && \
     cd toml11 && \
     cmake -DCMAKE_CXX_STANDARD=11 . && \
     make install -j $THREADS && \
-    cd .. && \
-    git clone https://github.com/metacubex/subconverter --depth=1 && \
-    cd subconverter && \
-    [ -n "$SHA" ] && sed -i 's/\(v[0-9]\.[0-9]\.[0-9]\)/\1-'"$SHA"'/' src/version.h;\
-    python3 -m ensurepip && \
-    python3 -m pip install gitpython && \
+    cd ..
+
+WORKDIR ${REPO_DIR}
+COPY . .
+
+RUN set -xe && \
+    [ -n "$SHA" ] && sed -i 's/\(v[0-9]\.[0-9]\.[0-9]\)/\1-'"$SHA"'/' src/version.h || true; \
     python3 scripts/update_rules.py -c scripts/rules_config.conf && \
     cmake -DCMAKE_BUILD_TYPE=Release . && \
     make -j $THREADS
 
 # build final image
-FROM alpine:3.16
+FROM alpine:3.20
 LABEL maintainer="metacubex.official@gmail.com"
 
 RUN apk add --no-cache --virtual subconverter-deps pcre2 libcurl yaml-cpp
 
-COPY --from=builder /subconverter/subconverter /usr/bin/
-COPY --from=builder /subconverter/base /base/
+COPY --from=builder /src/subconverter/subconverter /usr/bin/
+COPY --from=builder /src/subconverter/base /base/
 
 ENV TZ=Africa/Abidjan
 RUN ln -sf /usr/share/zoneinfo/$TZ /etc/localtime
@@ -59,6 +61,6 @@ RUN echo $TZ > /etc/timezone
 
 # set entry
 WORKDIR /base
-CMD subconverter
+CMD ["subconverter"]
 
 EXPOSE 25500/tcp
